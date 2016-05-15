@@ -19,6 +19,9 @@ ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO
 PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 */
 
+
+import java.util.Collection;
+import java.util.List;
 import java.util.Stack;
 import java.util.Hashtable;
 
@@ -140,6 +143,33 @@ class SymbolTable {
 	    res += "Scope " + j + ": " + tbl.elementAt(i) + "\n";
 	}
 	return res;
+    }
+
+    /**
+     * Make a 2-level deep copy of the current SymbolTable. The stack and the internal hashtables
+     * will be copied, but the keys and values of the hashtables will be references.
+     * @return the new copy of SymbolTable
+     */
+    @Override
+    public SymbolTable clone() {
+        SymbolTable st = new SymbolTable();
+        for (int i = 0; i < tbl.size(); i++) {
+            Hashtable t = (Hashtable)tbl.elementAt(i);
+            st.pushTable((Hashtable)t.clone());
+        }
+        return st;
+    }
+
+    /**
+     * Push a Hashtable into the stack. This is used by the clone method of SymbolTable.
+     * @param ht
+     */
+    public void pushTable(Hashtable ht) {
+        this.tbl.push(ht);
+    }
+
+    public Collection<Object> getValues() {
+        return ((Hashtable)tbl.peek()).values();
     }
 }
     

@@ -22,6 +22,10 @@ PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // This is a project skeleton file
 
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
 
 /** This class may be used to contain the semantic information such as
  * the inheritance graph.  You may use it or not as you like: it is only
@@ -29,6 +33,12 @@ import java.io.PrintStream;
 class ClassTable {
     private int semantErrors;
     private PrintStream errorStream;
+
+    public static HashMap<AbstractSymbol, ClassDef> class_map = new HashMap<>();
+    public static List<AbstractSymbol> default_classes = Arrays.asList(TreeConstants.Object_, TreeConstants.IO);
+    public static List<AbstractSymbol> base_classes = Arrays.asList(TreeConstants.Int, TreeConstants.Bool, TreeConstants.Str);
+    public static List<AbstractSymbol> all_basic_classes = Arrays.asList(TreeConstants.Object_, TreeConstants.IO,
+            TreeConstants.Int, TreeConstants.Bool, TreeConstants.Str);
 
     /** Creates data structures representing basic Cool classes (Object,
      * IO, Int, Bool, String).  Please note: as is this method does not
@@ -190,13 +200,32 @@ class ClassTable {
 	/* Do somethind with Object_class, IO_class, Int_class,
            Bool_class, and Str_class here */
 
+
+        // Add all basic classes into class_map
+        ClassDef object_class_def = new ClassDef(Object_class, TreeConstants.Object_, null);
+        object_class_def.addChildClasses(base_classes);
+        object_class_def.addChildClass(TreeConstants.IO);
+        class_map.put(TreeConstants.Object_, object_class_def);
+
+        ClassDef io_class_def = new ClassDef(IO_class, TreeConstants.IO, TreeConstants.Object_);
+        class_map.put(TreeConstants.IO, io_class_def);
+
+        ClassDef bool_class_def = new ClassDef(Bool_class, TreeConstants.Bool, TreeConstants.Object_);
+        class_map.put(TreeConstants.Bool, bool_class_def);
+
+        ClassDef int_class_def = new ClassDef(Int_class, TreeConstants.Int, TreeConstants.Object_);
+        class_map.put(TreeConstants.Int, int_class_def);
+
+        ClassDef str_class_def = new ClassDef(Str_class, TreeConstants.Str, TreeConstants.Object_);
+        class_map.put(TreeConstants.Str, str_class_def);
+
 	// NOT TO BE INCLUDED IN SKELETON
 	
-	Object_class.dump_with_types(System.err, 0);
-	IO_class.dump_with_types(System.err, 0);
-	Int_class.dump_with_types(System.err, 0);
-	Bool_class.dump_with_types(System.err, 0);
-	Str_class.dump_with_types(System.err, 0);
+	// Object_class.dump_with_types(System.err, 0);
+	// IO_class.dump_with_types(System.err, 0);
+	// Int_class.dump_with_types(System.err, 0);
+	// Bool_class.dump_with_types(System.err, 0);
+	// Str_class.dump_with_types(System.err, 0);
     }
 	
 
@@ -206,7 +235,78 @@ class ClassTable {
 	errorStream = System.err;
 	
 	/* fill this in */
+
+        // pass 0: load placeholder definitions for base classes
+        installBasicClasses();
+
+        // pass 1: read in class names
+        // checks: duplicate class names
+        for(int i = 0; i < cls.getLength(); i++) {
+            class_c current_class = (class_c)cls.getNth(i);
+            AbstractSymbol class_name = current_class.getName();
+            if(class_name == TreeConstants.SELF_TYPE || all_basic_classes.contains(class_name)) {
+                semantError(current_class).println("Redefinition of basic class " + class_name + ".");
+                continue;
+            } else if(class_map.containsKey(class_name)) {
+                semantError(current_class).println("Class " + class_name.str + " was previously defined.");
+                // why not continue here?
+            }
+            ClassDef new_class_def = new ClassDef(current_class, class_name, null);
+            class_map.put(class_name, new_class_def);
+        }
+
+        // pass 2: read in parent and children information
+        // checks: undefined parent
+        for (int i = 0; i < cls.getLength(); i++) {
+            class_c current_class = (class_c)cls.getNth(i);
+            AbstractSymbol class_name = current_class.getName();
+            AbstractSymbol parent_name = current_class.getParent();
+            // SELF_TYPE is not in class_map, skip it
+            if(class_name == TreeConstants.SELF_TYPE) {
+                continue;
+            }
+            if (base_classes.contains(parent_name) || parent_name == TreeConstants.SELF_TYPE) {
+                semantError(current_class).println("Class " + class_name + " cannot inherit class " + parent_name + ".");
+            } else if(!class_map.containsKey(parent_name)) {
+                semantError(current_class).println("Class " + class_name + " inherits from an undefined class " + parent_name + ".");
+            } else {
+                class_map.get(class_name).parent_class = parent_name;
+                class_map.get(parent_name).child_classes.add(class_name);
+            }
+        }
+
+        // inheritance check: cycles
+        // do we really cheack cycles?
+        for(AbstractSymbol current_class_name : class_map.keySet()) {
+            if (default_classes.contains(current_class_name) || base_classes.contains(current_class_name))
+                continue;
+            AbstractSymbol parent_class_name = class_map.get(current_class_name).parent_class;
+            List<AbstractSymbol> parents = new ArrayList<AbstractSymbol>();
+            while(true) {
+                if (parent_class_name == null) { System.out.println("is it possible to have parent_class_name == null?");}
+                if (parent_class_name == current_class_name || parents.contains(parent_class_name)) {
+                    semantError(class_map.get(current_class_name).class_src).println(
+                            "Class " + current_class_name.str + ", or an ancestor of " + current_class_name.str + ", is involved in an inheritance cycle.");
+                    break;
+                } else if (default_classes.contains(parent_class_name) || base_classes.contains(parent_class_name)
+                        || parent_class_name == null) { // we need to add null here to handle the case where the parent class is base class 
+                        // is it possible to have parent_class_name == null?
+                    break;
+                }
+                parents.add(parent_class_name);
+                parent_class_name = class_map.get(parent_class_name).parent_class;
+            }
+        }
     }
+
+    public static ClassDef getClassDef(AbstractSymbol a) {
+        return class_map.get(a);
+    }
+
+    public static boolean hasClass(AbstractSymbol a) {
+        return class_map.containsKey(a);
+    }
+
 
     /** Prints line number and file name of the given class.
      *

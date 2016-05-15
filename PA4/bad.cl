@@ -20,3 +20,12 @@ Class Main {
 	 }
 	};
 };
+
+class A inherits B {
+};
+
+class B inherits A {
+};
+
+class D inherits B {
+};

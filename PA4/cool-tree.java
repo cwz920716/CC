@@ -7,7 +7,7 @@
 //////////////////////////////////////////////////////////
 
 
-
+import java.util.*;
 import java.util.Enumeration;
 import java.io.PrintStream;
 import java.util.Vector;
@@ -154,6 +154,10 @@ abstract class Expression extends TreeNode {
         else
             { out.println(Utilities.pad(n) + ": _no_type"); }
     }
+    /* The abstract semant() method. Each subclass of Expression should override this method,
+     * and recursively call its children expressions semant() method.
+     */
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) { return null; }
 
 }
 
@@ -272,6 +276,206 @@ class programc extends Program {
 	ClassTable classTable = new ClassTable(classes);
 	
 	/* some semantic analysis code may go here */
+        // Pass 1 and Pass 2 are done in the constructor of ClassTable
+        // Pass 3: feature population
+        for (int i = 0; i < classes.getLength(); i++) {
+            class_c current_class_c = (class_c)classes.getNth(i);
+            ClassDef current_class_def = ClassTable.getClassDef(current_class_c.getName());
+            Features features = current_class_c.features;
+            // enter scope of this class
+            current_class_def.enterBothScopes();
+            for (int j = 0; j < features.getLength(); j++) {
+                Feature f = (Feature)features.getNth(j);
+                if(f instanceof method) {
+                    // method feature
+                    method mf = (method)f;
+                    if(current_class_def.method_table.probe(mf.name) != null) {
+                        classTable.semantError(current_class_def.class_src.getFilename(),
+                                mf).println("Method " + mf.name.str + " is multiply defined.");
+                    } else {
+                        current_class_def.method_table.addId(mf.name, mf);
+                    }
+                } else if (f instanceof attr) {
+                    // attr feature
+                    attr af = (attr)f;
+                    // attr name cannot be self
+                    if(af.name == TreeConstants.self) {
+                        classTable.semantError(current_class_def.class_src.getFilename(),
+                                af).println("'self' cannot be the name of an attribute.");
+                    } else if(current_class_def.attr_table.probe(af.name) != null) {
+                        classTable.semantError(current_class_def.class_src.getFilename(),
+                                af).println("Attribute " + af.name + " is multiply defined in class.");
+                    } else {
+                        current_class_def.attr_table.addId(af.name, af);
+                    }
+                }
+            }
+        }
+
+        // Also populate features for the five basic classes
+        for(AbstractSymbol basic_class : ClassTable.all_basic_classes) {
+            ClassDef current_class_def = ClassTable.getClassDef(basic_class);
+            Features features = current_class_def.class_src.features;
+            current_class_def.enterBothScopes();
+            for (int j = 0; j < features.getLength(); j++) {
+                Feature f = (Feature)features.getNth(j);
+                if(f instanceof method) {
+                    method mf = (method)f;
+                    current_class_def.method_table.addId(mf.name, mf);
+                } else if (f instanceof attr) {
+                    attr af = (attr)f;
+                    current_class_def.attr_table.addId(af.name, af);
+                }
+            }
+        }
+
+        // Pass 4: Check for invalid overriding and populate the symbol tables with ancestor information.
+        Stack<ClassDef> class_stack = new Stack<>();
+        // start from the root class: Object
+        ClassDef current_class = ClassTable.getClassDef(TreeConstants.Object_);
+        class_stack.push(current_class);
+        while(!class_stack.empty()) {
+            current_class = class_stack.pop();
+            // push each child into stack
+            if(current_class.child_classes != null) {
+                for(AbstractSymbol child : current_class.child_classes) {
+                    class_stack.push(ClassTable.getClassDef(child));
+                }
+            }
+            if(current_class.parent_class == null) continue;
+            // 1) Check for overriding
+            SymbolTable parent_attr_table = ClassTable.getClassDef(current_class.parent_class).attr_table;
+            SymbolTable parent_method_table = ClassTable.getClassDef(current_class.parent_class).method_table;
+            // prepare new symbol tables for merging
+            SymbolTable new_attr_table = parent_attr_table.clone();
+            SymbolTable new_method_table = parent_method_table.clone();
+
+            for(Object f : current_class.attr_table.getValues()) {
+                attr af = (attr)f;
+                // check for attr overriding
+                if (parent_attr_table.probe(af.name) != null) {
+                    classTable.semantError(current_class.class_src.getFilename(), af).println(
+                            "Attribute " + af.name + " is an attribute of an inherited class.");
+                } else {
+                    // store the attr into the new attr table
+                    new_attr_table.addId(af.name, af);
+                }
+            }
+
+            for(Object f : current_class.method_table.getValues()) {
+                // check for method overriding
+                method mf = (method)f;
+                method parent_mf = (method)parent_method_table.probe(mf.name);
+                if(parent_mf != null) {
+                    // method with the same name exists in a parent class, check formal list and return type
+                    if (parent_mf.return_type != mf.return_type) {
+                        classTable.semantError(current_class.class_src.getFilename(), mf).println(
+                                "In redefined method " + mf.name + ", return type " + mf.return_type +
+                                        " is different from original return type " + parent_mf.return_type + ".");
+                        continue;
+                    }
+                    // check for parameter number mismatch
+                    if(parent_mf.formals.getLength() != mf.formals.getLength()) {
+                        classTable.semantError(current_class.class_src.getFilename(), mf).println(
+                                "Incompatible number of formal parameters in redefined method " + mf.name + ".");
+                        continue;
+                    } else {
+                        // check for parameter type mismatch
+                        boolean mismatch = false;
+                        for(int j = 0; j < mf.formals.getLength(); j++) {
+                            formalc f1 = (formalc)parent_mf.formals.getNth(j);
+                            formalc f2 = (formalc)mf.formals.getNth(j);
+                            if(f1.type_decl != f2.type_decl) {
+                                classTable.semantError(current_class.class_src.getFilename(), mf).println(
+                                        "In redefined method " + mf.name + ", parameter type " + f2.type_decl +
+                                                " is different from original type " + f1.type_decl + ".");
+                                mismatch = true;
+                                break;
+                            }
+                        }
+                        if(mismatch) continue;
+                    }
+                }
+                // Replace the old method in parent with the new one
+                new_method_table.addId(mf.name, mf);
+            }
+            // 2) Replace the old symbol tables with the merged tables
+            current_class.attr_table = new_attr_table;
+            current_class.method_table = new_method_table;
+        }
+
+        // Check for Main class and main method
+        ClassDef main_class = ClassTable.getClassDef(TreeConstants.Main);
+        if(main_class == null) {
+            classTable.semantError().println("Class Main is not defined.");
+        } else {
+            if(main_class.method_table.probe(TreeConstants.main_meth) == null) {
+                classTable.semantError(main_class.class_src).println("No 'main' method in class Main.");
+            }
+        }
+
+        // Pass 5: type checking and type inference for expressions
+        for (int i = 0; i < classes.getLength(); i++) {
+            class_c current_class_c = (class_c) classes.getNth(i);
+            ClassDef current_class_def = ClassTable.getClassDef(current_class_c.getName());
+            Features features = current_class_c.features;
+            ArrayList<ErrorMessage> error_msg_list = new ArrayList<>();
+            for (int j = 0; j < features.getLength(); j++) {
+                Feature f = (Feature) features.getNth(j);
+                if (f instanceof method) {
+                    // type checking for expressions
+                    method mf = (method)f;
+                    // enter a new naming scope for the method
+                    current_class_def.attr_table.enterScope();
+                    for (int k = 0; k < mf.formals.getLength(); k++) {
+                        formalc formal = (formalc)mf.formals.getNth(k);
+                        if(formal.type_decl == TreeConstants.SELF_TYPE) {
+                            // formal parameter of a method cannot have SELF_TYPE
+                            error_msg_list.add(new ErrorMessage(mf, "Formal parameter " + formal.name + " cannot have type SELF_TYPE."));
+                        } else if(!SemantUtils.existsClass(formal.type_decl)) {
+                            // formal parameter type undefined.
+                            error_msg_list.add(new ErrorMessage(mf, "Class " + formal.type_decl +
+                                    " of formal parameter " + formal.name + " is undefined."));
+                        }
+                        // formal parameter cannot be named as self
+                        if(formal.name == TreeConstants.self) {
+                            error_msg_list.add(new ErrorMessage(mf, "'self' cannot be the name of a formal parameter."));
+                        } else {
+                            current_class_def.attr_table.addId(formal.name, new attr(formal.lineNumber, formal.name, formal.type_decl, new no_expr(formal.lineNumber)));
+                        }
+                    }
+                    AbstractSymbol returned_type = mf.expr.semant(error_msg_list, current_class_def);
+                    if(mf.return_type != TreeConstants.SELF_TYPE && !SemantUtils.existsClass(mf.return_type)) {
+                        error_msg_list.add(new ErrorMessage(mf, "Undefined return type " + mf.return_type + " in method test."));
+                    } else {
+                        if (!SemantUtils.conformsTo(returned_type, mf.return_type, current_class_def.class_name)) {
+                            error_msg_list.add(new ErrorMessage(mf, "Inferred return type " + returned_type + " of method " + mf.name +
+                                    " does not conform to declared return type " + mf.return_type + "."));
+                        }
+                    }
+                    current_class_def.attr_table.exitScope();
+                } else if (f instanceof attr) {
+                    attr af = (attr)f;
+                    // check whether declared type has been defined
+                    if(af.type_decl != TreeConstants.SELF_TYPE && !SemantUtils.existsClass(af.type_decl)) {
+                        error_msg_list.add(new ErrorMessage(af, "Class " + af.type_decl +
+                                " of attribute " + af.name + " is undefined."));
+                    } else {
+                        AbstractSymbol init_type = af.init.semant(error_msg_list, current_class_def);
+                        if (init_type != TreeConstants.No_type && !SemantUtils.conformsTo(init_type, af.type_decl, current_class_def.class_name)) {
+                            error_msg_list.add(new ErrorMessage(af, "Inferred type " + init_type + " of initialization of attribute " + af.name +
+                                    " does not conform to declared type " + af.type_decl + "."));
+                        }
+                    }
+                }
+            }
+            // Report errors
+            for(ErrorMessage em : error_msg_list) {
+                classTable.semantError(current_class_def.class_src.getFilename(), em.getErrorNode()).println(em.getMessage());
+            }
+            // exit scope of this class
+            // current_class_def.exitBothScopes();
+        }
 
 	if (classTable.errors()) {
 	    System.err.println("Compilation halted due to static semantic errors.");
