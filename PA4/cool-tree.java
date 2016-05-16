@@ -718,6 +718,24 @@ class branch extends Case {
 class assign extends Expression {
     protected AbstractSymbol name;
     protected Expression expr;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol expr_type = expr.semant(error_msg_list, class_def);
+        AbstractSymbol name_type = SemantUtils.typeOfObject(name, class_def.attr_table);
+        if(name_type == null) {
+            error_msg_list.add(new ErrorMessage(this, "Assignment to undeclared variable " + name.str + "."));
+            this.set_type(expr_type);
+        } else if(SemantUtils.conformsTo(expr_type, name_type, class_def.class_name)) {
+            this.set_type(expr_type);
+        } else {
+            error_msg_list.add(new ErrorMessage(this, "Type " + expr_type + " of assigned expression does not conform to declared type "
+                    + name_type + " of identifier " + name + "."));
+            this.set_type(TreeConstants.Object_);
+        }
+        return this.get_type();
+    }
+
     /** Creates "assign" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -758,6 +776,68 @@ class static_dispatch extends Expression {
     protected AbstractSymbol type_name;
     protected AbstractSymbol name;
     protected Expressions actual;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol expr_type = expr.semant(error_msg_list, class_def);
+        // cannot static dispatch to SELF_TYPE
+        if(type_name == TreeConstants.SELF_TYPE) {
+            error_msg_list.add(new ErrorMessage(this, "Static dispatch to SELF_TYPE."));
+            this.set_type(TreeConstants.Object_);
+            return this.get_type();
+        }
+        if(!SemantUtils.conformsTo(expr_type, type_name, class_def.class_name)) {
+            error_msg_list.add(new ErrorMessage(this, "Expression type " + expr_type +
+                    " does not conform to declared static dispatch type " + type_name + "."));
+        }
+        ArrayList<AbstractSymbol> param_types = new ArrayList<>();
+        for(int i = 0; i < actual.getLength(); i++) {
+            Expression e = (Expression)actual.getNth(i);
+            param_types.add(e.semant(error_msg_list, class_def));
+        }
+
+        ClassDef dispatch_class;
+        // TODO: What if the expr is self? What are we gonna get here? Test Later!!!!!
+        if(expr_type == TreeConstants.No_type || expr_type == TreeConstants.SELF_TYPE) {
+            dispatch_class = class_def;
+        } else {
+            dispatch_class = ClassTable.class_map.get(expr_type);
+        }
+        if(dispatch_class == null) {
+            error_msg_list.add(new ErrorMessage(this, "Static dispatch to undefined class " + type_name + "."));
+        } else {
+            method m = (method) dispatch_class.method_table.lookup(name);
+            if(m == null) {
+                // method not found, error
+                error_msg_list.add(new ErrorMessage(this, "Static dispatch to undefined method " + name + "."));
+            } else {
+                // check formal list
+                if(m.formals.getLength() != param_types.size()) {
+                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " called with wrong number of arguments."));
+                }
+                for(int i = 0; i < m.formals.getLength(); i++) {
+                    formalc f = (formalc)m.formals.getNth(i);
+                    if(!SemantUtils.conformsTo(param_types.get(i), f.type_decl, class_def.class_name)) {
+                        error_msg_list.add(new ErrorMessage(this, "In call of method " + m.name + ", type " + param_types.get(i) +
+                                " of parameter " + f.name + " does not conform to declared type " + f.type_decl + "."));
+                    }
+                }
+                // check return type
+                if (m.return_type == TreeConstants.SELF_TYPE) {
+                    if(expr_type == TreeConstants.No_type) {
+                        this.set_type(TreeConstants.SELF_TYPE); // why expr_type is No_type? (expr_type cannot be void) Shouldn't we throw an error?
+                    } else {
+                        this.set_type(expr_type);
+                    }
+                } else {
+                    this.set_type(m.return_type);
+                }
+                return this.get_type();
+            }
+        }
+        this.set_type(TreeConstants.Object_);
+        return this.get_type();
+    }
     /** Creates "static_dispatch" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -809,6 +889,58 @@ class dispatch extends Expression {
     protected Expression expr;
     protected AbstractSymbol name;
     protected Expressions actual;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol expr_type = expr.semant(error_msg_list, class_def);
+        ArrayList<AbstractSymbol> param_types = new ArrayList<>();
+        for(int i = 0; i < actual.getLength(); i++) {
+            Expression e = (Expression)actual.getNth(i);
+            param_types.add(e.semant(error_msg_list, class_def));
+        }
+        ClassDef dispatch_class;
+        // TODO: What if the expr is self? What are we gonna get here? Test Later!!!!!
+        if(expr_type == TreeConstants.No_type || expr_type == TreeConstants.SELF_TYPE) {
+            dispatch_class = class_def;
+        } else {
+            dispatch_class = ClassTable.class_map.get(expr_type);
+        }
+        if(dispatch_class == null) {
+            // We add this to avoid potential NULLPointerException
+            error_msg_list.add(new ErrorMessage(this, "Dispatch to undefined class " + expr_type + "."));
+        } else {
+            method m = (method) dispatch_class.method_table.lookup(name);
+            if(m == null) {
+                // method not found, error
+                error_msg_list.add(new ErrorMessage(this, "Dispatch to undefined method " + name + "."));
+            } else {
+                // check formal list
+                if(m.formals.getLength() != param_types.size()) {
+                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " called with wrong number of arguments."));
+                }
+                for(int i = 0; i < m.formals.getLength(); i++) {
+                    formalc f = (formalc)m.formals.getNth(i);
+                    if(!SemantUtils.conformsTo(param_types.get(i), f.type_decl, class_def.class_name)) {
+                        error_msg_list.add(new ErrorMessage(this, "In call of method " + m.name + ", type " + param_types.get(i) +
+                                " of parameter " + f.name + " does not conform to declared type " + f.type_decl + "."));
+                    }
+                }
+                // check return type
+                if (m.return_type == TreeConstants.SELF_TYPE) {
+                    if(expr_type == TreeConstants.No_type) {
+                        this.set_type(TreeConstants.SELF_TYPE);
+                    } else {
+                        this.set_type(expr_type);
+                    }
+                } else {
+                    this.set_type(m.return_type);
+                }
+                return this.get_type();
+            }
+        }
+        this.set_type(TreeConstants.Object_);
+        return this.get_type();
+    }
     /** Creates "dispatch" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
