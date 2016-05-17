@@ -283,7 +283,7 @@ class ClassTable {
             AbstractSymbol parent_class_name = class_map.get(current_class_name).parent_class;
             List<AbstractSymbol> parents = new ArrayList<AbstractSymbol>();
             while(true) {
-                if (parent_class_name == null) { System.out.println("is it possible to have parent_class_name == null?");}
+                // if (parent_class_name == null) { System.out.println("is it possible to have parent_class_name == null?");}
                 if (parent_class_name == current_class_name || parents.contains(parent_class_name)) {
                     semantError(class_map.get(current_class_name).class_src).println(
                             "Class " + current_class_name.str + ", or an ancestor of " + current_class_name.str + ", is involved in an inheritance cycle.");

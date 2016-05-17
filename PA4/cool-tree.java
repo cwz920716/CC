@@ -306,6 +306,7 @@ class programc extends Program {
                         classTable.semantError(current_class_def.class_src.getFilename(),
                                 af).println("Attribute " + af.name + " is multiply defined in class.");
                     } else {
+                        // TODO: Now check for method decl correctness
                         current_class_def.attr_table.addId(af.name, af);
                     }
                 }
@@ -431,7 +432,7 @@ class programc extends Program {
                         formalc formal = (formalc)mf.formals.getNth(k);
                         if(formal.type_decl == TreeConstants.SELF_TYPE) {
                             // formal parameter of a method cannot have SELF_TYPE
-                            error_msg_list.add(new ErrorMessage(mf, "Formal parameter " + formal.name + " cannot have type SELF_TYPE."));
+                            error_msg_list.add(new ErrorMessage(mf, "Formal parameter " + formal.name + " cannot have type TreeConstants.SELF_TYPE."));
                         } else if(!SemantUtils.existsClass(formal.type_decl)) {
                             // formal parameter type undefined.
                             error_msg_list.add(new ErrorMessage(mf, "Class " + formal.type_decl +
@@ -813,7 +814,7 @@ class static_dispatch extends Expression {
             } else {
                 // check formal list
                 if(m.formals.getLength() != param_types.size()) {
-                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " called with wrong number of arguments."));
+                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " invoked with wrong number of arguments."));
                 }
                 for(int i = 0; i < m.formals.getLength(); i++) {
                     formalc f = (formalc)m.formals.getNth(i);
@@ -916,7 +917,7 @@ class dispatch extends Expression {
             } else {
                 // check formal list
                 if(m.formals.getLength() != param_types.size()) {
-                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " called with wrong number of arguments."));
+                    error_msg_list.add(new ErrorMessage(this, "Method " + m.name + " invoked with wrong number of arguments."));
                 }
                 for(int i = 0; i < m.formals.getLength(); i++) {
                     formalc f = (formalc)m.formals.getNth(i);
@@ -988,6 +989,21 @@ class cond extends Expression {
     protected Expression pred;
     protected Expression then_exp;
     protected Expression else_exp;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol pred_type = pred.semant(error_msg_list, class_def);
+        AbstractSymbol then_type = then_exp.semant(error_msg_list, class_def);
+        AbstractSymbol else_type = else_exp.semant(error_msg_list, class_def);
+
+        if (pred_type != TreeConstants.Bool) {
+            error_msg_list.add(new ErrorMessage(this, "Predicate in if condition must have type Bool."));
+        }
+
+        this.set_type(SemantUtils.getlub(then_type, else_type, class_def.class_name));
+
+        return this.get_type();
+    }
     /** Creates "cond" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1030,6 +1046,17 @@ class cond extends Expression {
 class loop extends Expression {
     protected Expression pred;
     protected Expression body;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol pred_type = pred.semant(error_msg_list, class_def);
+        body.semant(error_msg_list, class_def);
+        if(pred_type != TreeConstants.Bool) {
+            error_msg_list.add(new ErrorMessage(this, "Condition in loop must have type of Bool."));
+        }
+        this.set_type(TreeConstants.Object_);
+        return this.get_type();
+    }
     /** Creates "loop" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1068,6 +1095,43 @@ class loop extends Expression {
 class typcase extends Expression {
     protected Expression expr;
     protected Cases cases;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        expr.semant(error_msg_list, class_def);
+        HashSet<AbstractSymbol> seenBranchClasses = new HashSet<>();
+        HashSet<AbstractSymbol> branchExpressionTypes = new HashSet<>();
+        for(int i = 0; i < cases.getLength(); i++) {
+            branch b = (branch)cases.getNth(i);
+            // Check whether the type of this branch exists
+            if(b.type_decl == TreeConstants.SELF_TYPE) {
+                // -- identifier in case branch cannot have type SELF_TYPE
+                error_msg_list.add(new ErrorMessage(b, "Identifier " + b.name + " declared with type SELF_TYPE in case branch."));
+            } else if(!SemantUtils.existsClass(b.type_decl)) {
+                // -- type of identifier is undefined
+                error_msg_list.add(new ErrorMessage(b, "Class " + b.type_decl + " of case branch is undefined."));
+            }
+            // Check whether type is distinct
+            if(seenBranchClasses.contains(b.type_decl)) {
+                // -- duplicate branch type in case
+                error_msg_list.add(new ErrorMessage(b, "Duplicate branch " + b.type_decl + " in case statement."));
+            } else {
+                seenBranchClasses.add(b.type_decl);
+            }
+            // Enterscope and evaluate expression
+            class_def.attr_table.enterScope();
+            // -- branch object id cannot be self
+            if(b.name == TreeConstants.self) {
+                error_msg_list.add(new ErrorMessage(b, "'self' bound in 'case'."));
+            }
+            class_def.attr_table.addId(b.name, new attr(b.lineNumber, b.name, b.type_decl, new no_expr(b.lineNumber)));
+            AbstractSymbol returned_type = b.expr.semant(error_msg_list, class_def);
+            branchExpressionTypes.add(returned_type);
+            class_def.attr_table.exitScope();
+        }
+        this.set_type(SemantUtils.getlubFromTypes(branchExpressionTypes, class_def.class_name));
+        return this.get_type();
+    }
     /** Creates "typcase" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1112,6 +1176,20 @@ class block extends Expression {
       * @param lineNumber the line in the source file from which this node came.
       * @param a0 initial value for body
       */
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        // For the first n - 1 expressions, we only do type checking and name checking
+        for (int i = 0; i < body.getLength() - 1; i++) {
+            Expression e = (Expression)body.getNth(i);
+            e.semant(error_msg_list, class_def);
+        }
+        // For the last expression, we need the return type
+        Expression e = (Expression)body.getNth(body.getLength() - 1);
+        AbstractSymbol return_type = e.semant(error_msg_list, class_def);
+        this.set_type(return_type);
+        return this.get_type();
+    }
     public block(int lineNumber, Expressions a1) {
         super(lineNumber);
         body = a1;
@@ -1145,6 +1223,36 @@ class let extends Expression {
     protected AbstractSymbol type_decl;
     protected Expression init;
     protected Expression body;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        // 1. Evaluate init
+        AbstractSymbol init_type = init.semant(error_msg_list, class_def);
+        // -- check whether type_decl is a defined class
+        if(type_decl != TreeConstants.SELF_TYPE && ClassTable.getClassDef(type_decl) == null) {
+            error_msg_list.add(new ErrorMessage(this, "Class " + type_decl + " of let-bound identifier "
+                    + identifier + " is undefined."));
+        }
+
+        // 2. type check for type_decl
+        // init_type should be subtype of type_decl
+        if(init_type != TreeConstants.No_type && !SemantUtils.conformsTo(init_type, type_decl, class_def.class_name)) {
+            error_msg_list.add(new ErrorMessage(this, "Inferred type " + init_type + " of initialization of "
+                    + identifier + " does not conform to identifier's declared type " + type_decl + "."));
+        }
+        // 3. Enter scope and evaluate body
+        class_def.attr_table.enterScope();
+        if(identifier == TreeConstants.self) {
+            error_msg_list.add(new ErrorMessage(this, "'self' cannot be bound in a 'let' expression."));
+        } else {
+            class_def.attr_table.addId(identifier, new attr(this.lineNumber, identifier, type_decl, new no_expr(this.lineNumber)));
+        }
+        AbstractSymbol returned_type = body.semant(error_msg_list, class_def);
+        class_def.attr_table.exitScope();
+
+        this.set_type(returned_type);
+        return this.get_type();
+    }
     /** Creates "let" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1191,6 +1299,18 @@ class let extends Expression {
 class plus extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " + " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "plus" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1229,6 +1349,18 @@ class plus extends Expression {
 class sub extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " - " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "sub" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1267,6 +1399,18 @@ class sub extends Expression {
 class mul extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " * " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "mul" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1305,6 +1449,18 @@ class mul extends Expression {
 class divide extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " / " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "divide" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1342,6 +1498,16 @@ class divide extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class neg extends Expression {
     protected Expression e1;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol returned_type = e1.semant(error_msg_list, class_def);
+        if(returned_type != TreeConstants.Int) {
+            error_msg_list.add(new ErrorMessage(this, "Neg: expected expression of type Int."));
+        }
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "neg" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1376,6 +1542,18 @@ class neg extends Expression {
 class lt extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " < " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "lt" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1414,6 +1592,20 @@ class lt extends Expression {
 class eq extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(ClassTable.base_classes.contains(e1.get_type()) || ClassTable.base_classes.contains(e2.get_type())) {
+            if (e1.get_type() != e2.get_type()) {
+                String msg = "Illegal comparison with a basic type.";
+                error_msg_list.add(new ErrorMessage(this, msg));
+            }
+        }
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "eq" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1452,6 +1644,18 @@ class eq extends Expression {
 class leq extends Expression {
     protected Expression e1;
     protected Expression e2;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        e2.semant(error_msg_list, class_def);
+        if(e1.get_type() != TreeConstants.Int || e2.get_type() != TreeConstants.Int) {
+            String msg = "non-Int arguments: " + e1.get_type().str + " <= " + e2.get_type().str;
+            error_msg_list.add(new ErrorMessage(this, msg));
+        }
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "leq" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1489,6 +1693,16 @@ class leq extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class comp extends Expression {
     protected Expression e1;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        AbstractSymbol returned_type = e1.semant(error_msg_list, class_def);
+        if(returned_type != TreeConstants.Bool) {
+            error_msg_list.add(new ErrorMessage(this, "Comp: expected expression of type Bool."));
+        }
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "comp" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1522,6 +1736,12 @@ class comp extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class int_const extends Expression {
     protected AbstractSymbol token;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        this.set_type(TreeConstants.Int);
+        return this.get_type();
+    }
     /** Creates "int_const" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1555,6 +1775,12 @@ class int_const extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class bool_const extends Expression {
     protected Boolean val;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "bool_const" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1588,6 +1814,12 @@ class bool_const extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class string_const extends Expression {
     protected AbstractSymbol token;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        this.set_type(TreeConstants.Str);
+        return this.get_type();
+    }
     /** Creates "string_const" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1623,6 +1855,19 @@ class string_const extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class new_ extends Expression {
     protected AbstractSymbol type_name;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        if(type_name == TreeConstants.SELF_TYPE) {
+            this.set_type(TreeConstants.SELF_TYPE); // set_type(TreeConstants.SELF_TYPE) vs. get type then set type to static type?
+        } else if (SemantUtils.existsClass(type_name)){
+            this.set_type(type_name);
+        } else {
+            error_msg_list.add(new ErrorMessage(this, "'new' used with undefined class " + type_name + "."));
+            this.set_type(TreeConstants.Object_);
+        }
+        return this.get_type();
+    }
     /** Creates "new_" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1656,6 +1901,13 @@ class new_ extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class isvoid extends Expression {
     protected Expression e1;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        e1.semant(error_msg_list, class_def);
+        this.set_type(TreeConstants.Bool);
+        return this.get_type();
+    }
     /** Creates "isvoid" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1688,6 +1940,12 @@ class isvoid extends Expression {
     <p>
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class no_expr extends Expression {
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        this.set_type(TreeConstants.No_type);
+        return this.get_type();
+    }
     /** Creates "no_expr" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
@@ -1717,6 +1975,23 @@ class no_expr extends Expression {
     See <a href="TreeNode.html">TreeNode</a> for full documentation. */
 class object extends Expression {
     protected AbstractSymbol name;
+
+    @Override
+    public AbstractSymbol semant(ArrayList<ErrorMessage> error_msg_list, ClassDef class_def) {
+        // if object is self: set node as SELF_TYPE
+        if(name == TreeConstants.self) {
+            this.set_type(TreeConstants.SELF_TYPE);
+            return this.get_type();
+        }
+        AbstractSymbol type = SemantUtils.typeOfObject(name, class_def.attr_table);
+        if(type == null) {
+            error_msg_list.add(new ErrorMessage(this, "Undeclared identifier " + name + "."));
+            this.set_type(TreeConstants.Object_);
+        } else {
+            this.set_type(type);
+        }
+        return this.get_type();
+    }
     /** Creates "object" AST node. 
       *
       * @param lineNumber the line in the source file from which this node came.
