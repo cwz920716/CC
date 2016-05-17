@@ -55,7 +55,10 @@ public class SemantUtils {
             t1 = class_name;
             return isSubType(t1, t2);
         }
-        if(t1 != TreeConstants.SELF_TYPE && t2 == TreeConstants.SELF_TYPE) return false; // it is possible t1 issubtype of t2?
+        if(t1 != TreeConstants.SELF_TYPE && t2 == TreeConstants.SELF_TYPE) {
+            t2 = class_name;
+            return isSubType(t1, t2);
+        } // it is possible t1 issubtype of t2?
         return isSubType(t1, t2);
     }
 

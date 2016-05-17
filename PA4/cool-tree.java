@@ -442,17 +442,20 @@ class programc extends Program {
                         if(formal.name == TreeConstants.self) {
                             error_msg_list.add(new ErrorMessage(mf, "'self' cannot be the name of a formal parameter."));
                         } else {
-                            current_class_def.attr_table.addId(formal.name, new attr(formal.lineNumber, formal.name, formal.type_decl, new no_expr(formal.lineNumber)));
+                            if (current_class_def.attr_table.probe(formal.name) == null) {
+                                current_class_def.attr_table.addId(formal.name, new attr(formal.lineNumber, formal.name, formal.type_decl, new no_expr(formal.lineNumber)));
+                            } else {
+                                error_msg_list.add(new ErrorMessage(mf, "Formal parameter " + formal.name + " is multiply defined."));
+                            }
                         }
                     }
                     AbstractSymbol returned_type = mf.expr.semant(error_msg_list, current_class_def);
                     if(mf.return_type != TreeConstants.SELF_TYPE && !SemantUtils.existsClass(mf.return_type)) {
-                        error_msg_list.add(new ErrorMessage(mf, "Undefined return type " + mf.return_type + " in method test."));
-                    } else {
-                        if (!SemantUtils.conformsTo(returned_type, mf.return_type, current_class_def.class_name)) {
-                            error_msg_list.add(new ErrorMessage(mf, "Inferred return type " + returned_type + " of method " + mf.name +
-                                    " does not conform to declared return type " + mf.return_type + "."));
-                        }
+                        error_msg_list.add(new ErrorMessage(mf, "Undefined return type " + mf.return_type + " in method " + mf.name + "."));
+                    }
+                    if (!SemantUtils.conformsTo(returned_type, mf.return_type, current_class_def.class_name)) {
+                        error_msg_list.add(new ErrorMessage(mf, "Inferred return type " + returned_type + " of method " + mf.name +
+                                " does not conform to declared return type " + mf.return_type + "."));
                     }
                     current_class_def.attr_table.exitScope();
                 } else if (f instanceof attr) {
