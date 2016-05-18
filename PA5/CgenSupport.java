@@ -708,7 +708,7 @@ class CgenSupport {
             if(a.init.get_type() == null || a.init.get_type() == TreeConstants.No_type) {
                 continue;
             }
-            a.init.code(str, n, class_table);
+            // a.init.code(str, n, class_table);
             emitStore(ACC, 3 + i + n.getParentNd().getAttrTable().size(), SELF, str);
             //handle garbage collector for attr
             if(Flags.cgen_Memmgr != Flags.GC_NOGC) {
