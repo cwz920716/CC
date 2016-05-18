@@ -24,6 +24,8 @@ PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 import java.io.PrintStream;
 import java.util.Vector;
 import java.util.Enumeration;
+import java.util.ArrayList;
+import java.util.Stack;
 
 /** This class is used for representing the inheritance tree during code
     generation. You will need to fill in some of its methods and
@@ -36,9 +38,16 @@ class CgenClassTable extends SymbolTable {
     /** This is the stream to which assembly instructions are output */
     private PrintStream str;
 
-    private int stringclasstag;
-    private int intclasstag;
-    private int boolclasstag;
+    public static IntSymbol EMPTY_INT_SLOT;
+    public static StringSymbol EMPTY_STR_SLOT;
+
+    private int stringclasstag = 4;
+    private int intclasstag = 3;
+    private int boolclasstag = 2;
+    private int ioclasstag = 1;
+    private int objectclasstag = 0;
+
+    private int class_tag_accu = 5;
 
 
     // The following methods emit code for constants and global
@@ -411,6 +420,8 @@ class CgenClassTable extends SymbolTable {
 	//                   - class_nameTab
 	//                   - dispatch tables
 
+        emitPrototypes();
+
 	if (Flags.cgen_debug) System.out.println("coding global text");
 	codeGlobalText();
 
@@ -418,6 +429,86 @@ class CgenClassTable extends SymbolTable {
 	//                   - object initializer
 	//                   - the class methods
 	//                   - etc...
+    }
+
+    private void setClassTag(CgenNode node) {
+        if(node.name == TreeConstants.Object_) {
+            node.setClassTag(objectclasstag);
+            return;
+        }
+        if(node.name == TreeConstants.IO) {
+            node.setClassTag(ioclasstag);
+            return;
+        }
+        if(node.name == TreeConstants.Int) {
+            node.setClassTag(intclasstag);
+            return;
+        }
+        if(node.name == TreeConstants.Str) {
+            node.setClassTag(stringclasstag);
+            return;
+        }
+        if(node.name == TreeConstants.Bool) {
+            node.setClassTag(boolclasstag);
+            return;
+        }
+        node.setClassTag(class_tag_accu);
+        class_tag_accu++;
+    }
+
+    public void emitPrototypes() {
+        // emit Object, IO, Int, Bool and String
+        // DFS over the inheritance graph
+        Stack<CgenNode> class_stack = new Stack<>();
+        CgenNode current_class = (CgenNode)lookup(TreeConstants.Object_);
+        class_stack.push(current_class);
+        while(!class_stack.empty()) {
+            current_class = class_stack.pop();
+            // set the class tag
+            setClassTag(current_class);
+            // push each children into stack
+            // (in order to match with the ref_cgen, we push in reverse order)
+            Vector v = current_class.getChildrenVector();
+            for(int i = v.size() - 1; i >= 0; i--) {
+                class_stack.push((CgenNode)v.get(i));
+            }
+            int offset = 0;
+            // prepare object_table
+            current_class.object_table.enterScope();
+            // skip for Object class
+            if(current_class.getParent() != TreeConstants.No_class) {
+                // push attrs from parent
+                ArrayList<ClassFeaturePair> parent_table = current_class.getParentNd().getAttrTable();
+                for(ClassFeaturePair pair : parent_table) {
+                    current_class.getAttrTable().add(pair);
+                    current_class.object_table.addId(pair.feature_name, new ObjectInfo(offset++, ObjectInfo.OBJTYPE.ATTR));
+                }
+            }
+            // push local attrs
+            for(int j = 0 ; j < current_class.getFeatures().getLength(); j++) {
+                Feature f = (Feature)current_class.getFeatures().getNth(j);
+                if(f instanceof attr) {
+                    attr a = (attr) f;
+                    // push attr into attr_table
+                    current_class.pushAttr(current_class.name, a.name, a.type_decl);
+                    // push attr into local_attr_table (why have a local attribute table)
+                    current_class.pushLocalAttr(a);
+                    // push attr into object_table
+                    current_class.object_table.addId(a.name, new ObjectInfo(offset++, ObjectInfo.OBJTYPE.ATTR));
+                }
+            }
+            // generate the prot object for current class
+            // Add -1 eye catcher
+            str.println(CgenSupport.WORD + "-1");
+            CgenSupport.emitProtObjRef(current_class.name, str);
+            str.print(CgenSupport.LABEL);
+            str.println(CgenSupport.WORD + current_class.getClassTag()); // tag
+            str.println(CgenSupport.WORD + (CgenSupport.DEFAULT_OBJFIELDS + current_class.getAttrTable().size())); //size
+            str.print(CgenSupport.WORD);
+            CgenSupport.emitDispTableRef(current_class.name, str);
+            str.println(); // dispatch table pointer
+            
+        }
     }
 
     /** Gets the root of the inheritance tree */
