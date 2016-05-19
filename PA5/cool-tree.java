@@ -11,6 +11,7 @@
 import java.util.Enumeration;
 import java.io.PrintStream;
 import java.util.Vector;
+import java.util.*;
 
 
 /** Defines simple phylum Program */
@@ -560,6 +561,31 @@ class assign extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // expr.code()
+        // [*] = acc
+        expr.code(s, current_node, class_table);
+        ObjectInfo info = (ObjectInfo) current_node.object_table.lookup(name);
+        if(info.obj_type == ObjectInfo.OBJTYPE.LOCAL) {
+            CgenSupport.emitStore(CgenSupport.ACC, -1 - info.offset, CgenSupport.FP, s);
+            return;
+        }
+        if(info.obj_type == ObjectInfo.OBJTYPE.FORMAL) {
+            //sw	$a0 16($fp)
+            // should plus 2 here because the offset of formal is 1-based
+            CgenSupport.emitStore(CgenSupport.ACC, 2 + info.offset, CgenSupport.FP, s);
+            return;
+        }
+        if(info.obj_type == ObjectInfo.OBJTYPE.ATTR) {
+            //sw	$a0 12($s0)
+            CgenSupport.emitStore(CgenSupport.ACC, 3 + info.offset, CgenSupport.SELF, s);
+            //handle garbage collector for attr
+            if(Flags.cgen_Memmgr != Flags.GC_NOGC) {
+                //addiu   $a1 $s0 12
+                //jal     _GenGC_Assign
+                CgenSupport.emitAddiu(CgenSupport.A1, CgenSupport.SELF, (3 + info.offset) * CgenSupport.WORD_SIZE, s);
+                CgenSupport.emitJal(CgenSupport.GENGC_ASSIGN, s);
+            }
+        }
     }
 
 
@@ -620,6 +646,51 @@ class static_dispatch extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // push formals into stack
+//        la	$a0 int_const0
+//        sw	$a0 0($sp)
+//        addiu	$sp $sp -4
+        for(int i = 0; i < actual.getLength(); i++) {
+            Expression e = (Expression)actual.getNth(i);
+            e.code(s, current_node, class_table);
+            CgenSupport.emitPush(CgenSupport.ACC, s);
+            class_table.getLocalVariableCount();
+        }
+
+        // dispatch from expr
+//        lw	$a0 12($s0)
+//        bne	$a0 $zero label0
+//        la	$a0 str_const0
+//        li	$t1 26
+//        jal	_dispatch_abort
+//        label0:
+//        lw	$t1 8($a0)
+//        lw	$t1 12($t1)
+//        jalr		$t1
+        expr.code(s, current_node, class_table);
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBne(CgenSupport.ACC, CgenSupport.ZERO, label, s);
+        // error handling _dispatch_abort
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        StringSymbol.codeRefByString(current_node.getFilename().toString(), s);
+        s.println();
+        CgenSupport.emitLoadImm(CgenSupport.T1, expr.getLineNumber(), s);
+        CgenSupport.emitJal(CgenSupport.DISPATCH_ABORT, s);
+        CgenSupport.emitLabelDef(label, s);
+        // load dispatch table
+        CgenSupport.emitPartialLoadAddress(CgenSupport.T1, s); // we load the dispatch table from the static class directly
+        CgenSupport.emitDispTableRef(type_name, s);
+        s.println();
+        // only difference from dispatch is that we look up the specified type_name instead of the the type of expr
+        int offset = ((CgenNode)class_table.lookup(type_name)).method_map.get(name);
+        CgenSupport.emitLoad(CgenSupport.T1, offset, CgenSupport.T1, s);
+        CgenSupport.emitJalr(CgenSupport.T1, s);
+
+        // pop formals from stack already done in codeClassMethods
+        // CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, CgenSupport.WORD_SIZE * actual.getLength(), s);        
+        for(int i = 0; i < actual.getLength(); i++) {
+            class_table.decreaseLocalVariableCount();
+        }
     }
 
 
@@ -675,6 +746,54 @@ class dispatch extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // push formals into stack
+//        la	$a0 int_const0
+//        sw	$a0 0($sp)
+//        addiu	$sp $sp -4
+        for(int i = 0; i < actual.getLength(); i++) {
+            Expression e = (Expression)actual.getNth(i);
+            e.code(s, current_node, class_table);
+            CgenSupport.emitPush(CgenSupport.ACC, s);
+            class_table.getLocalVariableCount();
+        }
+
+        // dispatch from expr
+//        lw	$a0 12($s0)
+//        bne	$a0 $zero label0
+//        la	$a0 str_const0
+//        li	$t1 26
+//        jal	_dispatch_abort
+//        label0:
+//        lw	$t1 8($a0)
+//        lw	$t1 12($t1)
+//        jalr		$t1
+        expr.code(s, current_node, class_table);
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBne(CgenSupport.ACC, CgenSupport.ZERO, label, s);
+        // error handling _dispatch_abort
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        StringSymbol.codeRefByString(current_node.getFilename().toString(), s);
+        s.println();
+        CgenSupport.emitLoadImm(CgenSupport.T1, expr.getLineNumber(), s);
+        CgenSupport.emitJal(CgenSupport.DISPATCH_ABORT, s);
+        CgenSupport.emitLabelDef(label, s);
+        // load dispatch table
+        CgenSupport.emitLoad(CgenSupport.T1, 2, CgenSupport.ACC, s);
+        int offset = 0;
+        if(expr.get_type() == TreeConstants.SELF_TYPE) {
+            offset = current_node.method_map.get(name);
+        } else {
+            offset = ((CgenNode)class_table.lookup(expr.get_type())).method_map.get(name);
+        }
+        CgenSupport.emitLoad(CgenSupport.T1, offset, CgenSupport.T1, s);
+        CgenSupport.emitJalr(CgenSupport.T1, s);
+
+        // pop formals from stack already done in codeClassMethods
+        // CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, CgenSupport.WORD_SIZE * actual.getLength(), s);        
+        for(int i = 0; i < actual.getLength(); i++) {
+            class_table.decreaseLocalVariableCount();
+        }
+
     }
 
 
@@ -726,6 +845,23 @@ class cond extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // pred.code()
+        // bne [ACC+3], 0, true_br
+        // else_exp.code()
+        // j after_br
+        // true_br
+        // then_exp.code()
+        // after_br:
+        pred.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        int label_after = CgenClassTable.getCurrentLabel();
+        int label_true = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBne(CgenSupport.ACC, CgenSupport.ZERO, label_true, s);
+        else_exp.code(s, current_node, class_table);
+        CgenSupport.emitBranch(label_after, s);
+        CgenSupport.emitLabelDef(label_true, s);
+        then_exp.code(s, current_node, class_table);
+        CgenSupport.emitLabelDef(label_after, s);
     }
 
 
@@ -772,6 +908,22 @@ class loop extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // loop:
+        // pred.code()
+        // beqz [ACC+3], after_loop
+        // body.code()
+        // j loop
+        // after_loop:
+
+        int label_start = CgenClassTable.getCurrentLabel();
+        int label_end = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitLabelDef(label_start, s);
+        pred.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        CgenSupport.emitBeq(CgenSupport.T1, CgenSupport.ZERO, label_end, s);
+        body.code(s, current_node, class_table);
+        CgenSupport.emitBranch(label_start, s);
+        CgenSupport.emitLabelDef(label_end, s);
     }
 
 
@@ -820,6 +972,94 @@ class typcase extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // expr.code()
+        // t1 = a0.classtag
+        // Get N [0...N-1] labels
+        // LabelN:
+        // t2 = br.type.classtag
+        // bne t1, t2, Label_N+1
+        // push a0
+        // br.body.code()
+        // j after
+        // ...
+        // after:
+        // pop t1
+
+        class BranchTagPair {
+            branch b;
+            int tag;
+
+            public BranchTagPair(branch b, int tag) {
+                this.b = b;
+                this.tag = tag;
+            }
+        }
+
+        // loop through branches and sort classes from highest tag to lowest
+        ArrayList<BranchTagPair> branchList = new ArrayList<>();
+        for(int i = 0; i < cases.getLength(); i++) {
+            branch b = (branch)cases.getNth(i);
+            branchList.add(new BranchTagPair(b, CgenSupport.getLowerBoundForBranch(b.type_decl, class_table)));
+        }
+        Collections.sort(branchList, new Comparator<BranchTagPair>() {
+            @Override
+            public int compare(BranchTagPair p1, BranchTagPair p2) {
+                return p2.tag - p1.tag;
+            }
+        });
+
+        int label_end = CgenClassTable.getCurrentLabel();
+        int label_branch = CgenClassTable.getCurrentLabel();
+        // evaluate expr
+        expr.code(s, current_node, class_table);
+        // handle error: case on void
+//        bne	$a0 $zero label1
+//        la	$a0 str_const0
+//        li	$t1 44
+//        jal	_case_abort2
+        CgenSupport.emitBne(CgenSupport.ACC, CgenSupport.ZERO, label_branch, s);
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        StringSymbol.codeRefByString(current_node.getFilename().toString(), s);
+        s.println();
+        CgenSupport.emitLoadImm(CgenSupport.T1, expr.getLineNumber(), s);
+        CgenSupport.emitJal(CgenSupport.CASE_ABORT_VOID, s);
+        CgenSupport.emitLabelDef(label_branch, s);
+
+        // load class tag of expr0
+        CgenSupport.emitLoad(CgenSupport.T2, 0, CgenSupport.ACC, s);
+
+        for(BranchTagPair p : branchList) {
+            branch b = p.b;
+            label_branch = CgenClassTable.getCurrentLabel();
+            // do two jumps
+            // write a function that output the class tag of current id type (minimum for the range)
+            CgenSupport.emitBlti(CgenSupport.T2, CgenSupport.getLowerBoundForBranch(b.type_decl, class_table), label_branch, s);
+            // write a function that check the maximum number of all possible subclasses class tags
+            CgenSupport.emitBgti(CgenSupport.T2, CgenSupport.getUpperBoundForBranch(b.type_decl, class_table), label_branch, s);
+            // move	$s1 $a0 -- skip this now
+            // store the value of expr_0 into id_k, and push id_k onto stack
+            CgenSupport.emitPush(CgenSupport.ACC, s);
+            current_node.object_table.enterScope();
+            current_node.object_table.addId(b.name, new ObjectInfo(class_table.getLocalVariableCount(), ObjectInfo.OBJTYPE.LOCAL));
+            b.expr.code(s, current_node, class_table);
+            // jump to the end
+            CgenSupport.emitBranch(label_end, s);
+            CgenSupport.emitLabelDef(label_branch, s);
+            // exit scope and decrease the local offset
+            current_node.object_table.exitScope();
+            class_table.decreaseLocalVariableCount();
+        }
+
+        // handling error for no branch matched
+        //jal	_case_abort
+        //label0:
+        CgenSupport.emitJal(CgenSupport.CASE_ABORT_NO_MATCH, s);
+        CgenSupport.emitLabelDef(label_end, s);
+
+        // pop out the local variable on the stack
+        CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, 4, s);
+
+        
     }
 
 
@@ -863,6 +1103,10 @@ class block extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        for(int i = 0; i < body.getLength(); i++) {
+            Expression e = (Expression)body.getNth(i);
+            e.code(s, current_node, class_table);
+        }
     }
 
 
@@ -919,6 +1163,42 @@ class let extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        current_node.object_table.enterScope();
+        // if init is empty, we push all zero onto the stack so that the local variable is void
+        if(init.get_type() == null || init.get_type() == TreeConstants.No_type) {
+            // handle the default initialization for the three base classes
+            if(type_decl == TreeConstants.Int) {
+                CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+                CgenClassTable.EMPTY_INT_SLOT.codeRef(s);
+                s.println();
+            } else if (type_decl == TreeConstants.Bool) {
+                CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+                BoolConst.falsebool.codeRef(s);
+                s.println();
+            } else if (type_decl == TreeConstants.Str) {
+                CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+                CgenClassTable.EMPTY_STR_SLOT.codeRef(s);
+                s.println();
+            } else {
+                CgenSupport.emitMove(CgenSupport.ACC, CgenSupport.ZERO, s);
+            }
+        } else {
+            init.code(s, current_node, class_table);
+        }
+        // sp = sp - 4
+        // sp[1] = acc
+        // push the local variable onto stack
+        CgenSupport.emitPush(CgenSupport.ACC, s);
+        // store the information about this local variable in the object_table
+        int offset = class_table.getLocalVariableCount();
+        current_node.object_table.addId(identifier, new ObjectInfo(offset, ObjectInfo.OBJTYPE.LOCAL));
+        body.code(s, current_node, class_table);
+        // pop the local variable
+        // sp = sp + 4
+        CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, CgenSupport.WORD_SIZE, s);
+        // decrease the local variable count
+        class_table.decreaseLocalVariableCount();
+        current_node.object_table.exitScope();
     }
 
 
@@ -965,6 +1245,25 @@ class plus extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if (Flags.cgen_debug) System.out.println("\t# enter evaluation of a plus expression");
+        e1.code(s, current_node, class_table);
+        //lw	$t1 12($a0)
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // push $t1 onto stack
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+        //lw	$t2 12($a0)
+        CgenSupport.emitLoad(CgenSupport.T2, 3, CgenSupport.ACC, s);
+        // pop $t1 from stack
+        CgenSupport.emitPop(CgenSupport.T1, s);
+        class_table.decreaseLocalVariableCount();
+        //add	$t1 $t1 $t2
+        //sw	$t1 12($a0)
+        CgenSupport.emitAdd(CgenSupport.T1, CgenSupport.T1, CgenSupport.T2, s);
+        CgenSupport.emitStore(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        if (Flags.cgen_debug) System.out.println("\t# exit evaluation of a plus expression");
     }
 
 
@@ -1190,6 +1489,38 @@ class lt extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // e1.code()
+        // t1 = [ACC+3]
+        // push t1
+        // e2.code()
+        // t1 = [ACC + 3]
+        // t2 = pop
+        // a0 = true
+        // blt t2, t1, after_br
+        // a0 = false
+        // after_br:
+
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // push val of e1 onto stack
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // pop val of e1 from stack into $t1 again
+        CgenSupport.emitPop(CgenSupport.T2, s);
+        class_table.decreaseLocalVariableCount();
+        //la	$a0 bool_const1
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.truebool.codeRef(s);
+        s.println();
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBlt(CgenSupport.T2, CgenSupport.T1, label, s);
+        //la	$a0 bool_const0
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.falsebool.codeRef(s);
+        s.println();
+        CgenSupport.emitLabelDef(label, s);
     }
 
 
@@ -1488,6 +1819,21 @@ class new_ extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // a0 <- protObj
+        // init
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        // if type_name is SELF_TYPE, we need to look up the type of current class
+        if(type_name == TreeConstants.SELF_TYPE) {
+            CgenSupport.emitProtObjRef(current_node.name, s);
+            s.println();
+            CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+            CgenSupport.emitJal(current_node.name + CgenSupport.CLASSINIT_SUFFIX, s);
+        } else {
+            CgenSupport.emitProtObjRef(type_name, s);
+            s.println();
+            CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+            CgenSupport.emitJal(type_name + CgenSupport.CLASSINIT_SUFFIX, s);
+        }
     }
 
 
@@ -1529,6 +1875,26 @@ class isvoid extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // e1.code()
+        // t1 = a0
+        // a0 = true
+        // beqz t1, after
+        // a0 = false
+        // after:
+
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitMove(CgenSupport.T1, CgenSupport.ACC, s);
+        //la	$a0 bool_const1
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.truebool.codeRef(s);
+        s.println();
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBeqz(CgenSupport.T1, label, s);
+        //la	$a0 bool_const0
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.falsebool.codeRef(s);
+        s.println();
+        CgenSupport.emitLabelDef(label, s);
     }
 
 
@@ -1565,6 +1931,8 @@ class no_expr extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // $a0 = 0
+        
     }
 
 
@@ -1606,6 +1974,29 @@ class object extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if(name == TreeConstants.self) {
+            CgenSupport.emitMove(CgenSupport.ACC, CgenSupport.SELF, s);
+            return;
+        }
+        ObjectInfo info = (ObjectInfo) current_node.object_table.lookup(name);
+        if(info.obj_type == ObjectInfo.OBJTYPE.FORMAL) {
+            //lw	$a0 ?($fp)
+            // should plus 2 here because the offset of formal is 1-based
+            CgenSupport.emitLoad(CgenSupport.ACC, 2 + info.offset, CgenSupport.FP, s);
+            return;
+        }
+        if(info.obj_type == ObjectInfo.OBJTYPE.ATTR) {
+            //lw	$a0 ?($s0)
+            // should plus 3 here because the offset of formal is 0-based
+            CgenSupport.emitLoad(CgenSupport.ACC, 3 + info.offset, CgenSupport.SELF, s);
+            return;
+        }
+        if(info.obj_type == ObjectInfo.OBJTYPE.LOCAL) {
+            //lw	$a0 -?($fp)
+            // 
+            CgenSupport.emitLoad(CgenSupport.ACC, -(1 + info.offset), CgenSupport.FP, s);
+            return;
+        }
     }
 
 

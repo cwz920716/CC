@@ -49,6 +49,10 @@ class CgenClassTable extends SymbolTable {
 
     private int class_tag_accu = 5;
 
+    private int local_variable_count = 0;
+
+    public static int LABEL_ACCU = 0;
+
 
     // The following methods emit code for constants and global
     // declarations.
@@ -647,6 +651,18 @@ class CgenClassTable extends SymbolTable {
             }
             
         }
+    }
+
+    public int getLocalVariableCount() {
+        return local_variable_count++;
+    }
+
+    public static int getCurrentLabel() {
+        return LABEL_ACCU++;
+    }
+
+    public void decreaseLocalVariableCount() {
+        local_variable_count--;
     }
 
     /** Gets the root of the inheritance tree */
