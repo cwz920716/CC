@@ -150,8 +150,8 @@ class CgenClassTable extends SymbolTable {
      * inttable and producing code for each entry. */
     private void codeConstants() {
 	// Add constants that are required by the code generator.
-	AbstractTable.stringtable.addString("");
-	AbstractTable.inttable.addString("0");
+        EMPTY_STR_SLOT = (StringSymbol)AbstractTable.stringtable.addString("");
+        EMPTY_INT_SLOT = (IntSymbol)AbstractTable.inttable.addString("0");
 
 	AbstractTable.stringtable.codeStringTable(stringclasstag, str);
 	AbstractTable.inttable.codeStringTable(intclasstag, str);
@@ -420,7 +420,10 @@ class CgenClassTable extends SymbolTable {
 	//                   - class_nameTab
 	//                   - dispatch tables
 
-        emitPrototypes();
+        codePrototypeObjects();
+        codeClassNameTab();
+        codeObjectTab();
+        codeDispatchTables();
 
 	if (Flags.cgen_debug) System.out.println("coding global text");
 	codeGlobalText();
@@ -429,6 +432,8 @@ class CgenClassTable extends SymbolTable {
 	//                   - object initializer
 	//                   - the class methods
 	//                   - etc...
+        codeObjectInit();
+        codeClassMethods();
     }
 
     private void setClassTag(CgenNode node) {
@@ -456,7 +461,134 @@ class CgenClassTable extends SymbolTable {
         class_tag_accu++;
     }
 
-    public void emitPrototypes() {
+    /**
+     * Generate code for the class name table.
+     */
+    private void codeClassNameTab() {
+        str.print(CgenSupport.CLASSNAMETAB + CgenSupport.LABEL);
+        // iterate through the class node vector
+        for (int i = 0; i < nds.size(); i++) {
+            CgenNode n = (CgenNode) nds.get(i);
+            str.print(CgenSupport.WORD);
+            StringSymbol.codeRefByString(n.name.getString(), str);
+            str.println();
+        }
+    }
+
+    /**
+     * Generate code for the class object table.
+     */
+    private void codeObjectTab() {
+        str.print(CgenSupport.CLASSOBJTAB + CgenSupport.LABEL);
+        // iterate through the class node vector
+        for (int i = 0; i < nds.size(); i++) {
+            CgenNode n = (CgenNode) nds.get(i);
+            str.print(CgenSupport.WORD);
+            CgenSupport.emitProtObjRef(n.name, str);
+            str.println();
+            str.print(CgenSupport.WORD);
+            CgenSupport.emitInitRef(n.name, str);
+            str.println();
+        }
+    }
+
+    /**
+     * Generate code for the class dispatch tables.
+     */
+    private void codeDispatchTables() {
+        // DFS over the inheritance graph
+        Stack<CgenNode> class_stack = new Stack<>();
+        CgenNode current_class = (CgenNode)lookup(TreeConstants.Object_);
+        class_stack.push(current_class);
+        while(!class_stack.empty()) {
+            current_class = class_stack.pop();
+            // push each children into stack
+            for(Enumeration e = current_class.getChildren(); e.hasMoreElements(); ) {
+                class_stack.push((CgenNode)e.nextElement());
+            }
+            // skip for Object class
+            if(current_class.getParent() != TreeConstants.No_class) {
+                // push methods from parent
+                ArrayList<ClassFeaturePair> parent_table = current_class.getParentNd().getMethodTable();
+                for(ClassFeaturePair pair : parent_table) {
+                    current_class.getMethodTable().add(pair);
+                }
+            }
+            // push local methods
+            for(int j = 0 ; j < current_class.getFeatures().getLength(); j++) {
+                Feature f = (Feature)current_class.getFeatures().getNth(j);
+                if(f instanceof method) {
+                    method m = (method) f;
+                    current_class.pushMethod(current_class.name, m.name);
+                    current_class.pushLocalMethod(m);
+                }
+            }
+            // generate the dispatch table for current class
+            CgenSupport.emitDispTableRef(current_class.name, str);
+            str.print(CgenSupport.LABEL);
+
+            int offset = 0;
+            for(ClassFeaturePair pair : current_class.getMethodTable()) {
+                str.print(CgenSupport.WORD);
+                str.println(pair.toString());
+
+                // put method into method_map
+                current_class.method_map.put(pair.feature_name, offset++);
+            }
+        }
+    }
+
+    private void codeObjectInit() {
+        for (int i = 0; i < nds.size(); i++) {
+            CgenNode n = (CgenNode) nds.get(i);
+            CgenSupport.emitObjectInit(n, this, str);
+        }
+    }
+
+    private void codeClassMethods() {
+        for(int i = 5; i < nds.size(); i++) {
+            CgenNode n = (CgenNode) nds.get(i);
+            for(int j = 0; j < n.getLocalMethodTable().size(); j++) {
+                method m = n.getLocalMethodTable().get(j);
+                // add all formal parameters into object table
+                n.object_table.enterScope();
+                for(int k = 0; k < m.formals.getLength(); k++) {
+                    formalc f = (formalc) m.formals.getNth(k);
+                    n.object_table.addId(f.name, new ObjectInfo(m.formals.getLength() - k, ObjectInfo.OBJTYPE.FORMAL));
+                }
+                // TODO: Do we need estimate temp space?
+                str.print(n.name + CgenSupport.METHOD_SEP + m.name + CgenSupport.LABEL);
+                // addiu	$sp $sp -12
+                // sw	$fp 12($sp)
+                // sw	$s0 8($sp)
+                // sw	$ra 4($sp)
+                // addiu	$fp $sp 4
+                // move	$s0 $a0
+                CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, -3 * CgenSupport.WORD_SIZE, str);
+                CgenSupport.emitStore(CgenSupport.FP, 3, CgenSupport.SP, str);
+                CgenSupport.emitStore(CgenSupport.SELF, 2, CgenSupport.SP, str);
+                CgenSupport.emitStore(CgenSupport.RA, 1, CgenSupport.SP, str);
+                CgenSupport.emitAddiu(CgenSupport.FP, CgenSupport.SP, CgenSupport.WORD_SIZE, str);
+                CgenSupport.emitMove(CgenSupport.SELF, CgenSupport.ACC, str);
+                m.expr.code(str, n, this);
+                // lw	$fp 12($sp)
+                // lw	$s0 8($sp)
+                // lw	$ra 4($sp)
+                // addiu	$sp $sp 12
+                // jr	$ra
+                CgenSupport.emitLoad(CgenSupport.FP, 3, CgenSupport.SP, str);
+                CgenSupport.emitLoad(CgenSupport.SELF, 2, CgenSupport.SP, str);
+                CgenSupport.emitLoad(CgenSupport.RA, 1, CgenSupport.SP, str);
+                // here we should count for arguments when we recover the stack pointer
+                CgenSupport.emitAddiu(CgenSupport.SP, CgenSupport.SP, (3 + m.formals.getLength()) * CgenSupport.WORD_SIZE, str);
+                CgenSupport.emitReturn(str);
+                // exit scope
+                n.object_table.exitScope();
+            }
+        }
+    }
+
+    public void codePrototypeObjects() {
         // emit Object, IO, Int, Bool and String
         // DFS over the inheritance graph
         Stack<CgenNode> class_stack = new Stack<>();
@@ -507,6 +639,12 @@ class CgenClassTable extends SymbolTable {
             str.print(CgenSupport.WORD);
             CgenSupport.emitDispTableRef(current_class.name, str);
             str.println(); // dispatch table pointer
+            // emit all the attrs
+            for(ClassFeaturePair pair : current_class.getAttrTable()) {
+                str.print(CgenSupport.WORD);
+                CgenSupport.emitProtObjAttr(pair.decl_type, str);
+                str.println();
+            }
             
         }
     }

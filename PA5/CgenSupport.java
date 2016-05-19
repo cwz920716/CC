@@ -100,8 +100,8 @@ class CgenSupport {
     final static String T2 = "$t2";            // Temporary 2
     final static String T3 = "$t3";            // Temporary 3
     final static String SP = "$sp";        // Stack pointer
-    final static String FP = "$fp";        // Frame pointer
-    final static String RA = "$ra";        // Return address
+    final static String FP = "$fp";        // Frame pointer (callee save)
+    final static String RA = "$ra";        // Return address (callee saves)
 
     // Opcodes
     final static String JALR = "\tjalr\t";
@@ -701,14 +701,14 @@ class CgenSupport {
         if(n.getParent() != TreeConstants.No_class) {
             emitJal(n.getParent() + CLASSINIT_SUFFIX, str);
         }
-        // init all attrs
+        // init all local attrs
         for(int i = 0; i < n.getLocalAttrTable().size(); i++) {
             attr a = n.getLocalAttrTable().get(i);
             // if the init is empty, we skip the initialization and leave the attr as void (as in prototype object)
             if(a.init.get_type() == null || a.init.get_type() == TreeConstants.No_type) {
                 continue;
             }
-            // a.init.code(str, n, class_table);
+            a.init.code(str, n, class_table);
             emitStore(ACC, 3 + i + n.getParentNd().getAttrTable().size(), SELF, str);
             //handle garbage collector for attr
             if(Flags.cgen_Memmgr != Flags.GC_NOGC) {
