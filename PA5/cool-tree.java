@@ -1053,6 +1053,7 @@ class typcase extends Expression {
         // handling error for no branch matched
         //jal	_case_abort
         //label0:
+        CgenSupport.emitMove(CgenSupport.ACC, CgenSupport.SELF, s); // add to pass tests/test
         CgenSupport.emitJal(CgenSupport.CASE_ABORT_NO_MATCH, s);
         CgenSupport.emitLabelDef(label_end, s);
 

@@ -22,6 +22,8 @@ PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // This is a project skeleton file
 
 import java.io.PrintStream;
+import java.util.*;
+import java.util.concurrent.*;
 
 /**
  * This class aggregates all kinds of support routines and constants
@@ -749,11 +751,18 @@ class CgenSupport {
 
     public static int getUpperBoundForBranch(AbstractSymbol class_name, CgenClassTable class_table) {
         CgenNode c = (CgenNode)class_table.lookup(class_name);
-        while(!c.getChildrenVector().isEmpty()) {
-            int l = c.getChildrenVector().size();
-            c = (CgenNode)c.getChildrenVector().get(l - 1);
+        int max = c.getClassTag();
+        Queue<CgenNode> q = new LinkedBlockingQueue<>();
+        q.add(c);
+        while(!q.isEmpty()) {
+            CgenNode head = q.remove();
+            if (max < head.getClassTag()) max = head.getClassTag();
+            Vector v = head.getChildrenVector();
+            for(int i = v.size() - 1; i >= 0; i--) {
+                q.add((CgenNode)v.get(i));
+            }
         }
-        return c.getClassTag();
+        return max;
     }
 }
     

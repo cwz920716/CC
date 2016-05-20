@@ -1,7 +1,11 @@
 class Main inherits IO {
   y:Int <- 5;
   main():Object {
-    test_1(1).abort()
+    let thing : Int <- y in
+      case thing of
+	x : IO => out_string( "IO\n" );
+	m : Main => out_string( "Main\n" );
+      esac
   };
 
   test_1(x:Int):Int {{

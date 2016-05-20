@@ -41,11 +41,11 @@ class CgenClassTable extends SymbolTable {
     public static IntSymbol EMPTY_INT_SLOT;
     public static StringSymbol EMPTY_STR_SLOT;
 
-    private int stringclasstag = 4;
-    private int intclasstag = 2;
-    private int boolclasstag = 3;
+    private int stringclasstag = 3;
+    private int intclasstag = 1;
+    private int boolclasstag = 2;
     private int objectclasstag = 0;
-    private int ioclasstag = 1;
+    private int ioclasstag = 4;
 
     private int class_tag_accu = 5;
 
@@ -232,48 +232,6 @@ class CgenClassTable extends SymbolTable {
 		       filename);
 
 	installClass(new CgenNode(Object_class, CgenNode.Basic, this));
-	
-	// The IO class inherits from Object. Its methods are
-	//        out_string(Str) : SELF_TYPE  writes a string to the output
-	//        out_int(Int) : SELF_TYPE      "    an int    "  "     "
-	//        in_string() : Str            reads a string from the input
-	//        in_int() : Int                "   an int     "  "     "
-
-	class_c IO_class = 
-	    new class_c(0,
-		       TreeConstants.IO,
-		       TreeConstants.Object_,
-		       new Features(0)
-			   .appendElement(new method(0,
-					      TreeConstants.out_string,
-					      new Formals(0)
-						  .appendElement(new formalc(0,
-								     TreeConstants.arg,
-								     TreeConstants.Str)),
-					      TreeConstants.SELF_TYPE,
-					      new no_expr(0)))
-			   .appendElement(new method(0,
-					      TreeConstants.out_int,
-					      new Formals(0)
-						  .appendElement(new formalc(0,
-								     TreeConstants.arg,
-								     TreeConstants.Int)),
-					      TreeConstants.SELF_TYPE,
-					      new no_expr(0)))
-			   .appendElement(new method(0,
-					      TreeConstants.in_string,
-					      new Formals(0),
-					      TreeConstants.Str,
-					      new no_expr(0)))
-			   .appendElement(new method(0,
-					      TreeConstants.in_int,
-					      new Formals(0),
-					      TreeConstants.Int,
-					      new no_expr(0))),
-		       filename);
-
-	CgenNode IO_node = new CgenNode(IO_class, CgenNode.Basic, this);
-	installClass(IO_node);
 
 	// The Int class has no methods and only a single attribute, the
 	// "val" for the integer.
@@ -352,6 +310,48 @@ class CgenClassTable extends SymbolTable {
 		       filename);
 
 	installClass(new CgenNode(Str_class, CgenNode.Basic, this));
+	
+	// The IO class inherits from Object. Its methods are
+	//        out_string(Str) : SELF_TYPE  writes a string to the output
+	//        out_int(Int) : SELF_TYPE      "    an int    "  "     "
+	//        in_string() : Str            reads a string from the input
+	//        in_int() : Int                "   an int     "  "     "
+
+	class_c IO_class = 
+	    new class_c(0,
+		       TreeConstants.IO,
+		       TreeConstants.Object_,
+		       new Features(0)
+			   .appendElement(new method(0,
+					      TreeConstants.out_string,
+					      new Formals(0)
+						  .appendElement(new formalc(0,
+								     TreeConstants.arg,
+								     TreeConstants.Str)),
+					      TreeConstants.SELF_TYPE,
+					      new no_expr(0)))
+			   .appendElement(new method(0,
+					      TreeConstants.out_int,
+					      new Formals(0)
+						  .appendElement(new formalc(0,
+								     TreeConstants.arg,
+								     TreeConstants.Int)),
+					      TreeConstants.SELF_TYPE,
+					      new no_expr(0)))
+			   .appendElement(new method(0,
+					      TreeConstants.in_string,
+					      new Formals(0),
+					      TreeConstants.Str,
+					      new no_expr(0)))
+			   .appendElement(new method(0,
+					      TreeConstants.in_int,
+					      new Formals(0),
+					      TreeConstants.Int,
+					      new no_expr(0))),
+		       filename);
+
+	CgenNode IO_node = new CgenNode(IO_class, CgenNode.Basic, this);
+	installClass(IO_node);
     }
 	
     // The following creates an inheritance graph from
