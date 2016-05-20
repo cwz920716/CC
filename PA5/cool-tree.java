@@ -856,7 +856,7 @@ class cond extends Expression {
         CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
         int label_after = CgenClassTable.getCurrentLabel();
         int label_true = CgenClassTable.getCurrentLabel();
-        CgenSupport.emitBne(CgenSupport.ACC, CgenSupport.ZERO, label_true, s);
+        CgenSupport.emitBne(CgenSupport.T1, CgenSupport.ZERO, label_true, s);
         else_exp.code(s, current_node, class_table);
         CgenSupport.emitBranch(label_after, s);
         CgenSupport.emitLabelDef(label_true, s);
@@ -1310,6 +1310,19 @@ class sub extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if (Flags.cgen_debug) System.out.println("\t# enter evaluation of a sub expression");
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+        CgenSupport.emitLoad(CgenSupport.T2, 3, CgenSupport.ACC, s);
+        CgenSupport.emitPop(CgenSupport.T1, s);
+        class_table.decreaseLocalVariableCount();
+        CgenSupport.emitSub(CgenSupport.T1, CgenSupport.T1, CgenSupport.T2, s);
+        CgenSupport.emitStore(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        if (Flags.cgen_debug) System.out.println("\t# exit evaluation of a sub expression");
     }
 
 
@@ -1356,6 +1369,19 @@ class mul extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if (Flags.cgen_debug) System.out.println("\t# enter evaluation of a mul expression");
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+        CgenSupport.emitLoad(CgenSupport.T2, 3, CgenSupport.ACC, s);
+        CgenSupport.emitPop(CgenSupport.T1, s);
+        class_table.decreaseLocalVariableCount();
+        CgenSupport.emitMul(CgenSupport.T1, CgenSupport.T1, CgenSupport.T2, s);
+        CgenSupport.emitStore(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        if (Flags.cgen_debug) System.out.println("\t# exit evaluation of a mul expression");
     }
 
 
@@ -1402,6 +1428,19 @@ class divide extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if (Flags.cgen_debug) System.out.println("\t# enter evaluation of a div expression");
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+        CgenSupport.emitLoad(CgenSupport.T2, 3, CgenSupport.ACC, s);
+        CgenSupport.emitPop(CgenSupport.T1, s);
+        class_table.decreaseLocalVariableCount();
+        CgenSupport.emitDiv(CgenSupport.T1, CgenSupport.T1, CgenSupport.T2, s);
+        CgenSupport.emitStore(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        if (Flags.cgen_debug) System.out.println("\t# exit evaluation of a div expression");
     }
 
 
@@ -1443,6 +1482,13 @@ class neg extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        if (Flags.cgen_debug) System.out.println("\t# enter evaluation of a neg expression");
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitJal(CgenSupport.OBJECT_COPY, s);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        CgenSupport.emitNeg(CgenSupport.T1, CgenSupport.T1, s);
+        CgenSupport.emitStore(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        if (Flags.cgen_debug) System.out.println("\t# exit evaluation of a neg expression");
     }
 
 
@@ -1567,6 +1613,38 @@ class eq extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // e1.code()
+        // t1 = [ACC+3]
+        // push t1
+        // e2.code()
+        // t1 = [ACC + 3]
+        // t2 = pop
+        // a0 = true
+        // beq t2, t1, after_br
+        // a0 = false
+        // after_br:
+
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // push val of e1 onto stack
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // pop val of e1 from stack into $t1 again
+        CgenSupport.emitPop(CgenSupport.T2, s);
+        class_table.decreaseLocalVariableCount();
+        //la	$a0 bool_const1
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.truebool.codeRef(s);
+        s.println();
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBeq(CgenSupport.T2, CgenSupport.T1, label, s);
+        //la	$a0 bool_const0
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.falsebool.codeRef(s);
+        s.println();
+        CgenSupport.emitLabelDef(label, s);
     }
 
 
@@ -1613,6 +1691,38 @@ class leq extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // e1.code()
+        // t1 = [ACC+3]
+        // push t1
+        // e2.code()
+        // t1 = [ACC + 3]
+        // t2 = pop
+        // a0 = true
+        // bleq t2, t1, after_br
+        // a0 = false
+        // after_br:
+
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // push val of e1 onto stack
+        class_table.getLocalVariableCount();
+        CgenSupport.emitPush(CgenSupport.T1, s);
+        e2.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        // pop val of e1 from stack into $t1 again
+        CgenSupport.emitPop(CgenSupport.T2, s);
+        class_table.decreaseLocalVariableCount();
+        //la	$a0 bool_const1
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.truebool.codeRef(s);
+        s.println();
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBleq(CgenSupport.T2, CgenSupport.T1, label, s);
+        //la	$a0 bool_const0
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.falsebool.codeRef(s);
+        s.println();
+        CgenSupport.emitLabelDef(label, s);
     }
 
 
@@ -1654,6 +1764,24 @@ class comp extends Expression {
       * @param s the output stream 
       * */
     public void code(PrintStream s, CgenNode current_node, CgenClassTable class_table) {
+        // e1.code()
+        // t1 = a0[3]
+        // a0 = true
+        // beq t1, 0, after
+        // a0 = false
+        // after:
+
+        e1.code(s, current_node, class_table);
+        CgenSupport.emitLoad(CgenSupport.T1, 3, CgenSupport.ACC, s);
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.truebool.codeRef(s);
+        s.println();
+        int label = CgenClassTable.getCurrentLabel();
+        CgenSupport.emitBeqz(CgenSupport.T1, label, s);
+        CgenSupport.emitPartialLoadAddress(CgenSupport.ACC, s);
+        BoolConst.falsebool.codeRef(s);
+        s.println();
+        CgenSupport.emitLabelDef(label, s);
     }
 
 

@@ -1,8 +1,7 @@
 class Main inherits IO {
   y:Int <- 5;
   main():Object {
-    let x:Int <- 1 in 
-      out_int(test_1(x))
+    "halt".abort()
   };
 
   test_1(x:Int):Int {{

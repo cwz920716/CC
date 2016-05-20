@@ -42,10 +42,10 @@ class CgenClassTable extends SymbolTable {
     public static StringSymbol EMPTY_STR_SLOT;
 
     private int stringclasstag = 4;
-    private int intclasstag = 3;
-    private int boolclasstag = 2;
-    private int ioclasstag = 1;
+    private int intclasstag = 2;
+    private int boolclasstag = 3;
     private int objectclasstag = 0;
+    private int ioclasstag = 1;
 
     private int class_tag_accu = 5;
 
